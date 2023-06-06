@@ -1,0 +1,59 @@
+version: '3'
+
+services:
+  reverse-proxy:
+    image: traefik:v2.3.4
+    command:
+      # Docker swarm configuration
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.swarmMode=true"
+      - "--providers.docker.exposedbydefault=true"
+      - "--providers.docker.network=traefik-public"
+      # Configure entrypoint
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # SSL configuration
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencryptresolver.acme.email=admin@domain.com"
+      - "--certificatesresolvers.letsencryptresolver.acme.storage=/letsencrypt/acme.json"
+      # Global HTTP -> HTTPS
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - traefik-certificates:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - traefik-public
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.services.traefik.loadbalancer.server.port=888"
+        - "traefik.http.routers.http-catchall.rule=hostregexp(`{host:.+}`)"
+        - "traefik.http.routers.http-catchall.entrypoints=web"
+        - "traefik.http.routers.http-catchall.middlewares=redirect-to-https@docker"
+        - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+
+  helloworld:
+    image: tutum/hello-world:latest
+    networks:
+      - traefik-public
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.helloworld.rule=Host(`helloworld.domain.com`)"
+        - "traefik.http.routers.helloworld.entrypoints=websecure"
+        - "traefik.http.routers.helloworld.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.helloworld.loadbalancer.server.port=80"
+
+volumes:
+  traefik-certificates:
+networks:
+  traefik-public:
+    external: true
